@@ -28,6 +28,34 @@ const TARGET_CATEGORIES = [
 ];
 
 /**
+ * Calculate simple similarity score between two strings
+ * @param {string} str1
+ * @param {string} str2
+ * @returns {number} Score between 0 and 1
+ */
+function similarity(str1, str2) {
+  const s1 = str1.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const s2 = str2.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  if (s1 === s2) return 1.0;
+
+  // Simple substring matching
+  if (s1.includes(s2) || s2.includes(s1)) {
+    const shorter = Math.min(s1.length, s2.length);
+    const longer = Math.max(s1.length, s2.length);
+    return shorter / longer;
+  }
+
+  // Word overlap
+  const words1 = str1.toLowerCase().split(/\s+/);
+  const words2 = str2.toLowerCase().split(/\s+/);
+  const overlap = words1.filter(w => words2.includes(w)).length;
+  const total = Math.max(words1.length, words2.length);
+
+  return overlap / total;
+}
+
+/**
  * Parse TSV file and extract title mappings
  * @param {string} tsvPath - Path to TSV file
  * @returns {Array<{category: string, title: string, level: string, rowNum: number}>}
@@ -190,6 +218,67 @@ function discoverAllModules() {
   return allModules;
 }
 
+/**
+ * Match a module file to its TSV entry
+ * @param {object} module - Module object from discoverAllModules
+ * @param {Array} titleEntries - TSV entries from parseTSV
+ * @returns {{tsvEntry: object, confidence: string, score: number} | null}
+ */
+function matchModuleToTSV(module, titleEntries) {
+  // Get current title from file
+  const titleInfo = extractCurrentTitle(module.path);
+  if (!titleInfo) {
+    return null;
+  }
+
+  // Filter to same category
+  const categoryEntries = titleEntries.filter(entry => entry.category === module.category);
+
+  // Score each entry against current title and filename
+  let bestMatch = null;
+  let bestScore = 0;
+
+  for (const entry of categoryEntries) {
+    // Score against current title
+    const titleScore = similarity(titleInfo.title, entry.title);
+
+    // Score against filename (extract keywords)
+    const filenameKeywords = module.filename
+      .replace(/^(con|proc|ref)-/, '')
+      .replace(/\.adoc$/, '')
+      .replace(/-/g, ' ');
+    const filenameScore = similarity(filenameKeywords, entry.title);
+
+    // Combined score (weighted toward current title)
+    const score = (titleScore * 0.7) + (filenameScore * 0.3);
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = entry;
+    }
+  }
+
+  if (!bestMatch) {
+    return null;
+  }
+
+  // Determine confidence level
+  let confidence;
+  if (bestScore >= 0.9) {
+    confidence = 'high';
+  } else if (bestScore >= 0.6) {
+    confidence = 'medium';
+  } else {
+    confidence = 'low';
+  }
+
+  return {
+    tsvEntry: bestMatch,
+    confidence,
+    score: bestScore
+  };
+}
+
 console.log('=== Discovering modules ===');
 const modules = discoverAllModules();
 console.log(`Found ${modules.length} module files`);
@@ -218,5 +307,24 @@ sampleModules.forEach(mod => {
     console.log(`  Title: "${titleInfo.title}" (line ${titleInfo.lineNumber})`);
   } else {
     console.log(`[${mod.category}] ${mod.filename} - ERROR: No title found`);
+  }
+});
+
+console.log('\n=== Testing module-to-TSV matching ===');
+const tsvPath = resolve(REPO_ROOT, '.claude/skills/jtbd-map/jtbd-toc-mapping.tsv');
+const titleEntries = parseTSV(tsvPath);
+const testModules = modules.slice(0, 10);
+
+testModules.forEach(mod => {
+  const titleInfo = extractCurrentTitle(mod.path);
+  const match = matchModuleToTSV(mod, titleEntries);
+
+  console.log(`\n[${mod.category}] ${mod.filename}`);
+  console.log(`  Current: "${titleInfo?.title || 'N/A'}"`);
+
+  if (match) {
+    console.log(`  Match: "${match.tsvEntry.title}" (${match.confidence}, score: ${match.score.toFixed(2)})`);
+  } else {
+    console.log(`  Match: NONE`);
   }
 });
