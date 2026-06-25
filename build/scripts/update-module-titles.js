@@ -81,6 +81,46 @@ function parseTSV(tsvPath) {
 }
 
 /**
+ * Extract current title from a module file
+ * @param {string} filePath - Path to .adoc file
+ * @returns {{title: string, lineNumber: number} | null}
+ */
+function extractCurrentTitle(filePath) {
+  const content = readFileSync(filePath, 'utf-8');
+  const lines = content.split('\n');
+
+  // Find first line starting with "= " after metadata
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Skip metadata lines (start with : or [)
+    if (line.startsWith(':') || line.startsWith('[')) {
+      continue;
+    }
+
+    // Empty lines are ok
+    if (!line.trim()) {
+      continue;
+    }
+
+    // Title line must start with "= "
+    if (line.startsWith('= ')) {
+      return {
+        title: line.substring(2).trim(),
+        lineNumber: i
+      };
+    }
+
+    // If we hit content before finding title, something is wrong
+    if (line.trim() && !line.startsWith('//')) {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Discover all .adoc module files in a category directory
  * @param {string} categoryPath - Path to category-maps subdirectory
  * @param {string} categoryName - Category name (e.g., "Discover")
@@ -167,4 +207,16 @@ Object.entries(modulesByCategory).forEach(([cat, count]) => {
 console.log('\nSample modules:');
 modules.slice(0, 5).forEach(mod => {
   console.log(`  [${mod.category}] ${mod.filename}`);
+});
+
+console.log('\n=== Testing title extraction ===');
+const sampleModules = modules.slice(0, 5);
+sampleModules.forEach(mod => {
+  const titleInfo = extractCurrentTitle(mod.path);
+  if (titleInfo) {
+    console.log(`[${mod.category}] ${mod.filename}`);
+    console.log(`  Title: "${titleInfo.title}" (line ${titleInfo.lineNumber})`);
+  } else {
+    console.log(`[${mod.category}] ${mod.filename} - ERROR: No title found`);
+  }
 });
